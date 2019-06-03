@@ -100,6 +100,7 @@ var readTypeDictStr = {
   "float32": "buffer.readFloatBE(bag.byteOffset, true); bag.byteOffset += 4;",
   "float64": "buffer.readDoubleBE(bag.byteOffset, true); bag.byteOffset += 8;",
   "string": "bag.readString(buffer);",
+  "string_nullable": "buffer.readUInt8(bag.byteOffset++, true) ? bag.readString(buffer) : null;",
   "varuint": "bag.readVarUInt(buffer);",
   "varint": "bag.readVarInt(buffer);",
   "buffer": "bag.readBuffer(buffer);"
@@ -117,6 +118,7 @@ function getWriteTypeDictStr(dataType, valStr) {
     case "float32": return "bag.byteOffset = wBuffer.writeFloatBE(" + valStr + ", bag.byteOffset, true);";
     case "float64": return "bag.byteOffset = wBuffer.writeDoubleBE(" + valStr + ", bag.byteOffset, true);";
     case "string": return "bag.writeString(" + valStr + ", wBuffer);";
+    case "string_nullable": return valStr + " === null ? bag.byteOffset = wBuffer.writeUInt8(0, bag.byteOffset, true) : (bag.byteOffset = wBuffer.writeUInt8(1, bag.byteOffset, true), (bag.writeString(" + valStr + ", wBuffer)));";
     case "varuint": return "bag.writeVarUInt(" + valStr + ", wBuffer);";
     case "varint": return "bag.writeVarInt(" + valStr + ", wBuffer);";
     case "buffer": return "bag.writeBuffer(" + valStr + ", wBuffer);";
@@ -127,6 +129,7 @@ var constantByteCounts = { "boolean": 1, "int8": 1, "uint8": 1, "int16": 2, "uin
 
 var dynamicByteCounts = {
   "string": function(val) { var len = Buffer.byteLength(val, strEnc); return getVarUIntByteLength(len) + len; },
+  "string_nullable": function(val) { if(val === null) return 1; var len = Buffer.byteLength(val, strEnc); return getVarUIntByteLength(len) + len + 1; },
   "varuint": function(val) { return getVarUIntByteLength(val); },
   "varint": function(val) { return getVarIntByteLength(val); },
   "buffer": function(val) { var len = val.length; return getVarUIntByteLength(len) + len; }
@@ -222,6 +225,11 @@ function getCheckDataTypeStr(valStr, typeStr) {
   return "if (typeof(" + valStr + ") !== '" + typeStr + "'){" + throwMessage + "}";
 }
 
+function getCheckDataTypeStrNullable(valStr, typeStr) {
+  var throwMessage = "bag.throwTypeError(" + valStr + ",'" + typeStr + "');";
+  return "if (typeof(" + valStr + ") !== 'string' && " + valStr + " !== null){" + throwMessage + "}";
+}
+
 function getBoundsCheckStr(valStr, min, max, schemaType) {
   var throwMessage = "bag.throwTypeError(" + valStr + ",'number'," + min + "," + max + ",'" + schemaType + "');";
   return "if (typeof(" + valStr + ") !== 'number'||" + valStr + "<" + min + "||" + valStr + ">" + max + "){" + throwMessage + "}";
@@ -241,6 +249,7 @@ function validateDataType(dataType, valStr) {
     case "float32": return getBoundsCheckStr(valStr, -maxFloat, maxFloat, "float32");
     case "float64": return getBoundsCheckStr(valStr, -Number.MAX_VALUE, Number.MAX_VALUE, "float64");
     case "string": return getCheckDataTypeStr(valStr, "string");
+    case "string_nullable": return getCheckDataTypeStrNullable(valStr, "string_nullable");
     case "varuint": return getBoundsCheckStr(valStr, 0, 0x7fffffff, "varuint");
     case "varint": return getBoundsCheckStr(valStr, -0x40000000, 0x3fffffff, "varint");
     case "buffer": return getCheckBufferStr(valStr);
@@ -372,6 +381,8 @@ function getCompiledSchema(schema, validate) {
   strEncodeFunction = strEncodeRefDecs.concat(strByteCount, strEncodeFunction, "return wBuffer;");
   strDecodeFunction = strDecodeFunction.concat("return ref1['a'];");
 
+  console.log('\n\nencode:\n', strEncodeFunction);
+  console.log('\n\ndecode:\n', strDecodeFunction);
   var compiledEncode = new Function('json', 'bag', strEncodeFunction);
   var compiledDecode = new Function('buffer', 'bag', strDecodeFunction);
 
